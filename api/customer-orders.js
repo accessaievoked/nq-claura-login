@@ -23,6 +23,11 @@ const SHIPROCKET_BASE_URL =
 
 const API_VERSION = process.env.SHOPIFY_API_VERSION || '2026-07';
 
+const ENV = (k) => String(process.env[k] || '').trim();
+const STATIC_TOKEN = ENV('SHOPIFY_ADMIN_TOKEN') || ENV('SHOPIFY_ADMIN_ACCESS_TOKEN');
+const CLIENT_ID = ENV('SHOPIFY_CLIENT_ID');
+const CLIENT_SECRET = ENV('SHOPIFY_CLIENT_SECRET');
+
 // Accept SHOPIFY_SHOP_DOMAIN or SHOPIFY_STORE_DOMAIN; strip https:// and trailing slash.
 const SHOP_DOMAIN = String(process.env.SHOPIFY_SHOP_DOMAIN || process.env.SHOPIFY_STORE_DOMAIN || '')
   .trim()
@@ -72,22 +77,26 @@ async function resolvePhone(customerToken) {
 let cached = { token: null, exp: 0 };
 
 async function getAdminToken(forceRefresh) {
-  if (process.env.SHOPIFY_ADMIN_TOKEN) return process.env.SHOPIFY_ADMIN_TOKEN;
+  // Static token first; if it gets rejected (401) we retry with client credentials.
+  if (STATIC_TOKEN && !forceRefresh) return STATIC_TOKEN;
   if (!forceRefresh && cached.token && Date.now() < cached.exp - 60000) return cached.token;
+  if (!CLIENT_ID || !CLIENT_SECRET) throw new Error('Could not authenticate with Shopify');
 
   const r = await fetch(`https://${SHOP_DOMAIN}/admin/oauth/access_token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: new URLSearchParams({
-      client_id: process.env.SHOPIFY_CLIENT_ID || '',
-      client_secret: process.env.SHOPIFY_CLIENT_SECRET || '',
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
       grant_type: 'client_credentials',
     }),
   });
+  const raw = await r.text();
   let d = {};
-  try { d = await r.json(); } catch (e) {}
+  try { d = JSON.parse(raw); } catch (e) {}
   if (!r.ok || !d.access_token) {
-    console.error('Shopify token exchange failed', r.status, JSON.stringify(d).slice(0, 300));
+    // Raw body so Vercel Logs shows Shopify's real reason. Never logs secrets.
+    console.error('Shopify token exchange failed', r.status, 'shop:', SHOP_DOMAIN, '| body:', raw.slice(0, 400));
     throw new Error('Could not authenticate with Shopify');
   }
   cached = { token: d.access_token, exp: Date.now() + (Number(d.expires_in) || 86399) * 1000 };
@@ -101,7 +110,7 @@ async function gql(query, variables, retried) {
     headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
     body: JSON.stringify({ query, variables }),
   });
-  if (r.status === 401 && !retried && !process.env.SHOPIFY_ADMIN_TOKEN) return gql(query, variables, true);
+  if (r.status === 401 && !retried && CLIENT_ID && CLIENT_SECRET) return gql(query, variables, true);
   let d = {};
   try { d = await r.json(); } catch (e) {}
   if (!r.ok || d.errors) {
@@ -223,12 +232,12 @@ module.exports = async (req, res) => {
   }
 
   if (!SHOP_DOMAIN ||
-      (!process.env.SHOPIFY_ADMIN_TOKEN && !(process.env.SHOPIFY_CLIENT_ID && process.env.SHOPIFY_CLIENT_SECRET))) {
+      (!STATIC_TOKEN && !(CLIENT_ID && CLIENT_SECRET))) {
     console.error('customer-orders: missing env ->',
       'domain:', !!SHOP_DOMAIN,
-      '| admin token:', !!process.env.SHOPIFY_ADMIN_TOKEN,
-      '| client id:', !!process.env.SHOPIFY_CLIENT_ID,
-      '| client secret:', !!process.env.SHOPIFY_CLIENT_SECRET);
+      '| admin token:', !!STATIC_TOKEN,
+      '| client id:', !!CLIENT_ID,
+      '| client secret:', !!CLIENT_SECRET);
     return res.status(500).json({ error: 'Orders are not configured yet' });
   }
 
