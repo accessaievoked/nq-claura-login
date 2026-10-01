@@ -1,16 +1,7 @@
-const crypto = require('crypto');
-
 const BASE_URL =
   process.env.SHIPROCKET_ENV === 'production'
     ? 'https://checkout-api.shiprocket.com'
     : 'https://fastrr-api-dev.pickrr.com';
-
-function sign(bodyString) {
-  return crypto
-    .createHmac('sha256', process.env.SHIPROCKET_HMAC_SECRET)
-    .update(bodyString)
-    .digest('base64');
-}
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', 'https://claura.in');
@@ -25,11 +16,8 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Missing customer token' });
   }
 
-  // Signed the same way as otp-initiate / otp-verify (those work).
-  const bodyString = JSON.stringify({
-    token: customer_token,
-    timestamp: new Date().toISOString(),
-  });
+  // Per the Postman docs: body is just { token }, no HMAC header needed.
+  const bodyString = JSON.stringify({ token: customer_token });
 
   try {
     const sr = await fetch(`${BASE_URL}/api/v1/customer-data`, {
@@ -37,7 +25,6 @@ module.exports = async (req, res) => {
       headers: {
         'Content-Type': 'application/json',
         'X-Api-Key': process.env.SHIPROCKET_API_KEY,
-        'X-Api-HMAC-SHA256': sign(bodyString),
       },
       body: bodyString,
     });
@@ -74,10 +61,17 @@ module.exports = async (req, res) => {
       '| address keys:', addrs[0] ? Object.keys(addrs[0]).join(',') : '-'
     );
 
+    // Shiprocket sends line1/line2; the theme reads address_line1/address_line2.
+    const addresses = addrs.map((a) => ({
+      ...a,
+      address_line1: a.address_line1 || a.line1 || '',
+      address_line2: a.address_line2 || a.line2 || '',
+    }));
+
     return res.status(200).json({
       country_code: data.result.country_code || '91',
       phone: data.result.phone,
-      addresses: addrs,
+      addresses,
     });
   } catch (err) {
     console.error('Shiprocket customer-data request error', err && err.message);
