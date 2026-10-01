@@ -12,23 +12,36 @@
 //   SUPABASE_URL                same project as shopify-order-sync.js
 //   SUPABASE_SERVICE_ROLE_KEY   same as shopify-order-sync.js
 
+const crypto = require('crypto');
+
 const SHIPROCKET_BASE_URL =
   process.env.SHIPROCKET_ENV === 'production'
     ? 'https://checkout-api.shiprocket.com'
     : 'https://fastrr-api-dev.pickrr.com';
 
+function sign(bodyString) {
+  return crypto
+    .createHmac('sha256', process.env.SHIPROCKET_HMAC_SECRET)
+    .update(bodyString)
+    .digest('base64');
+}
+
 async function resolvePhone(customerToken) {
+  const bodyString = JSON.stringify({ token: customerToken, timestamp: new Date().toISOString() });
   const sr = await fetch(`${SHIPROCKET_BASE_URL}/api/v1/customer-data`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Api-Key': process.env.SHIPROCKET_API_KEY,
+      'X-Api-HMAC-SHA256': sign(bodyString),
     },
-    body: JSON.stringify({ token: customerToken }),
+    body: bodyString,
   });
-  const data = await sr.json();
+  let data = {};
+  try { data = await sr.json(); } catch (e) {}
   if (!sr.ok || data.error || !data.result) {
-    throw new Error(data.error || 'Could not resolve customer from Shiprocket');
+    console.error('Shiprocket customer-data (orders) failed', sr.status, JSON.stringify(data).slice(0, 500));
+    throw new Error(typeof data.error === 'string' ? data.error : 'Could not resolve customer from Shiprocket');
   }
   return String(data.result.phone || '').replace(/\D/g, '').slice(-10);
 }
