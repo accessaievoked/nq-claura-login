@@ -21,13 +21,15 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { customer_token } = req.body || {};
-  if (!customer_token) {
+  if (!customer_token || customer_token === 'undefined' || customer_token === 'null') {
     return res.status(400).json({ error: 'Missing customer token' });
   }
 
-  // Note: per the Postman docs this endpoint does NOT require the
-  // X-Api-HMAC-SHA256 header — only customer-data with just the token.
-  const bodyString = JSON.stringify({ token: customer_token });
+  // Signed the same way as otp-initiate / otp-verify (those work).
+  const bodyString = JSON.stringify({
+    token: customer_token,
+    timestamp: new Date().toISOString(),
+  });
 
   try {
     const sr = await fetch(`${BASE_URL}/api/v1/customer-data`, {
@@ -35,9 +37,11 @@ module.exports = async (req, res) => {
       headers: {
         'Content-Type': 'application/json',
         'X-Api-Key': process.env.SHIPROCKET_API_KEY,
+        'X-Api-HMAC-SHA256': sign(bodyString),
       },
       body: bodyString,
     });
+
     let data = {};
     try {
       data = await sr.json();
@@ -46,14 +50,22 @@ module.exports = async (req, res) => {
     }
 
     if (!sr.ok || data.error || !data.result) {
-      // Visible in Vercel -> Logs. Never log the token or keys.
-      console.error('Shiprocket customer-data failed', sr.status, JSON.stringify(data).slice(0, 500));
+      // Visible in Vercel -> Logs. Never logs the token or keys.
+      console.error(
+        'Shiprocket customer-data failed',
+        'status:', sr.status,
+        '| env:', process.env.SHIPROCKET_ENV || 'dev',
+        '| body:', JSON.stringify(data).slice(0, 500)
+      );
       return res
         .status(sr.ok ? 502 : sr.status || 502)
-        .json({ error: typeof data.error === 'string' ? data.error : 'Could not fetch account data' });
+        .json({
+          error: typeof data.error === 'string' ? data.error : 'Could not fetch account data',
+          shiprocket_status: sr.status,
+        });
     }
 
-    // Logs only the FIELD NAMES (no personal data) so we can see what Shiprocket returns.
+    // Logs only FIELD NAMES (no personal data).
     const addrs = Array.isArray(data.result.addresses) ? data.result.addresses : [];
     console.log(
       'Shiprocket customer-data ok. result keys:',
