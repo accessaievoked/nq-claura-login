@@ -12,28 +12,18 @@
 //   SUPABASE_URL                same project as shopify-order-sync.js
 //   SUPABASE_SERVICE_ROLE_KEY   same as shopify-order-sync.js
 
-const crypto = require('crypto');
-
 const SHIPROCKET_BASE_URL =
   process.env.SHIPROCKET_ENV === 'production'
     ? 'https://checkout-api.shiprocket.com'
     : 'https://fastrr-api-dev.pickrr.com';
 
-function sign(bodyString) {
-  return crypto
-    .createHmac('sha256', process.env.SHIPROCKET_HMAC_SECRET)
-    .update(bodyString)
-    .digest('base64');
-}
-
 async function resolvePhone(customerToken) {
-  const bodyString = JSON.stringify({ token: customerToken, timestamp: new Date().toISOString() });
+  const bodyString = JSON.stringify({ token: customerToken });
   const sr = await fetch(`${SHIPROCKET_BASE_URL}/api/v1/customer-data`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Api-Key': process.env.SHIPROCKET_API_KEY,
-      'X-Api-HMAC-SHA256': sign(bodyString),
     },
     body: bodyString,
   });
