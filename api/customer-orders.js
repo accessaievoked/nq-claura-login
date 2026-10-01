@@ -10,7 +10,7 @@
 // own phone fields match the last 10 digits.
 //
 // Required environment variables (Vercel):
-//   SHOPIFY_SHOP_DOMAIN     your-store.myshopify.com   (NOT claura.in)
+//   SHOPIFY_SHOP_DOMAIN (or SHOPIFY_STORE_DOMAIN)  your-store.myshopify.com   (NOT claura.in)
 //   EITHER  SHOPIFY_CLIENT_ID + SHOPIFY_CLIENT_SECRET   (Dev Dashboard app)
 //   OR      SHOPIFY_ADMIN_TOKEN                         (legacy shpat_ token)
 // Optional:
@@ -22,6 +22,12 @@ const SHIPROCKET_BASE_URL =
     : 'https://fastrr-api-dev.pickrr.com';
 
 const API_VERSION = process.env.SHOPIFY_API_VERSION || '2026-07';
+
+// Accept SHOPIFY_SHOP_DOMAIN or SHOPIFY_STORE_DOMAIN; strip https:// and trailing slash.
+const SHOP_DOMAIN = String(process.env.SHOPIFY_SHOP_DOMAIN || process.env.SHOPIFY_STORE_DOMAIN || '')
+  .trim()
+  .replace(/^https?:\/\//, '')
+  .replace(/\/+$/, '');
 
 // ---------- helpers ----------
 function last10(v) {
@@ -69,7 +75,7 @@ async function getAdminToken(forceRefresh) {
   if (process.env.SHOPIFY_ADMIN_TOKEN) return process.env.SHOPIFY_ADMIN_TOKEN;
   if (!forceRefresh && cached.token && Date.now() < cached.exp - 60000) return cached.token;
 
-  const r = await fetch(`https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/oauth/access_token`, {
+  const r = await fetch(`https://${SHOP_DOMAIN}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -90,7 +96,7 @@ async function getAdminToken(forceRefresh) {
 
 async function gql(query, variables, retried) {
   const token = await getAdminToken(!!retried);
-  const r = await fetch(`https://${process.env.SHOPIFY_SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`, {
+  const r = await fetch(`https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
     body: JSON.stringify({ query, variables }),
@@ -216,9 +222,13 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: 'Missing customer token' });
   }
 
-  if (!process.env.SHOPIFY_SHOP_DOMAIN ||
+  if (!SHOP_DOMAIN ||
       (!process.env.SHOPIFY_ADMIN_TOKEN && !(process.env.SHOPIFY_CLIENT_ID && process.env.SHOPIFY_CLIENT_SECRET))) {
-    console.error('customer-orders: Shopify env vars missing (SHOPIFY_SHOP_DOMAIN + client id/secret or admin token)');
+    console.error('customer-orders: missing env ->',
+      'domain:', !!SHOP_DOMAIN,
+      '| admin token:', !!process.env.SHOPIFY_ADMIN_TOKEN,
+      '| client id:', !!process.env.SHOPIFY_CLIENT_ID,
+      '| client secret:', !!process.env.SHOPIFY_CLIENT_SECRET);
     return res.status(500).json({ error: 'Orders are not configured yet' });
   }
 
