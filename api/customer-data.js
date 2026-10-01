@@ -38,18 +38,37 @@ module.exports = async (req, res) => {
       },
       body: bodyString,
     });
-    const data = await sr.json();
-
-    if (!sr.ok || data.error) {
-      return res.status(sr.status || 400).json({ error: data.error || 'Could not fetch account data' });
+    let data = {};
+    try {
+      data = await sr.json();
+    } catch (e) {
+      // Shiprocket returned a non-JSON body
     }
 
+    if (!sr.ok || data.error || !data.result) {
+      // Visible in Vercel -> Logs. Never log the token or keys.
+      console.error('Shiprocket customer-data failed', sr.status, JSON.stringify(data).slice(0, 500));
+      return res
+        .status(sr.ok ? 502 : sr.status || 502)
+        .json({ error: typeof data.error === 'string' ? data.error : 'Could not fetch account data' });
+    }
+
+    // Logs only the FIELD NAMES (no personal data) so we can see what Shiprocket returns.
+    const addrs = Array.isArray(data.result.addresses) ? data.result.addresses : [];
+    console.log(
+      'Shiprocket customer-data ok. result keys:',
+      Object.keys(data.result).join(','),
+      '| address count:', addrs.length,
+      '| address keys:', addrs[0] ? Object.keys(addrs[0]).join(',') : '-'
+    );
+
     return res.status(200).json({
-      country_code: data.result.country_code,
+      country_code: data.result.country_code || '91',
       phone: data.result.phone,
-      addresses: data.result.addresses || [],
+      addresses: addrs,
     });
   } catch (err) {
+    console.error('Shiprocket customer-data request error', err && err.message);
     return res.status(502).json({ error: 'Could not reach Shiprocket right now' });
   }
 };
