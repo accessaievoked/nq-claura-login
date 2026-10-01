@@ -71,10 +71,30 @@ module.exports = async (req, res) => {
         .json({ error: typeof data.error === 'string' ? data.error : 'Invalid or expired OTP' });
     }
 
-    // Only forward what the browser needs. The theme stores these two values.
+    // Shiprocket's verify response may not call the field `token`, so try the
+    // likely names. If none match, log the FIELD NAMES (never values) so we can
+    // see the real shape in Vercel -> Logs, and fail loudly instead of letting
+    // the theme store "undefined" as the token.
+    const r = data.result || {};
+    const customerToken =
+      r.token || r.access_token || r.customer_token || r.accessToken ||
+      (r.data && (r.data.token || r.data.access_token)) || null;
+    const expiresAt =
+      r.expires_at || r.expiry || r.expires_in ||
+      (r.data && r.data.expires_at) || '';
+
+    if (!customerToken) {
+      console.error(
+        'Shiprocket verify OK but no token field found. result keys:',
+        Object.keys(r).join(','),
+        '| top-level keys:', Object.keys(data).join(',')
+      );
+      return res.status(502).json({ error: 'Login succeeded but no session token was returned. Please try again.' });
+    }
+
     return res.status(200).json({
-      customer_token: data.result.token,
-      expires_at: data.result.expires_at,
+      customer_token: customerToken,
+      expires_at: expiresAt,
     });
   } catch (err) {
     console.error('Shiprocket verify request error', err && err.message);
